@@ -62,9 +62,10 @@ def handle_media(message):
     if result:
         bot.reply_to(
             message,
-            f"✅ Media saved!\n🆔 Trigger ID: `{trigger_id}`\n\n🔗 Share this ID with others to access this media!",
+            f"✅ Media saved!\n🔗 Shareable Link:\nhttps://t.me/TechieMonkBot?start={trigger_id}",
             parse_mode="Markdown"
         )
+
     else:
         bot.reply_to(message, "❌ Failed to save media.")
 
@@ -96,6 +97,33 @@ def handle_get_command(message):
     except Exception as e:
         print("❌ Error in /get handler:", e)
         bot.reply_to(message, "⚠️ An error occurred. Please try again.")
+
+
+
+@bot.message_handler(commands=['start'])
+def handle_start_command(message):
+    parts = message.text.strip().split()
+    if len(parts) == 2:
+        trigger_id = parts[1]
+        media = get_media_by_trigger_id(trigger_id)
+
+        if not media:
+            bot.reply_to(message, "❌ No media found for that trigger ID.")
+            return
+
+        file_id = media["file_id"]
+        media_type = media["media_type"]
+
+        if media_type == "photo":
+            bot.send_photo(message.chat.id, file_id)
+        elif media_type == "video":
+            bot.send_video(message.chat.id, file_id)
+        else:
+            bot.reply_to(message, "⚠️ Unsupported media type.")
+    else:
+        bot.send_message(message.chat.id, "👋 Welcome to TechieMonkBot! Send me a trigger ID or use /get.")
+
+
 
 # --- START POLLING ---
 print("🤖 Bot is running...")
