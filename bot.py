@@ -1,12 +1,15 @@
+import os
 import telebot
 import uuid
 from datetime import datetime
 from supabase import create_client
 
-# --- CONFIGURATION SECTION ---
-BOT_TOKEN = "your_telegram_bot_token"
-SUPABASE_URL = "https://yourproject.supabase.co"
-SUPABASE_KEY = "your_anon_key"
+# --- READ FROM ENVIRONMENT VARIABLES ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+# TARGET_CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1002650324099"))  # Optional fallback
+
 TARGET_CHANNEL_ID = -1002650324099  # Use -100 prefix for private channels
 
 bot = telebot.TeleBot(BOT_TOKEN)
