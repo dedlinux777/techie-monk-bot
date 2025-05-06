@@ -1,81 +1,99 @@
-import os
+import telebot
 import uuid
-import psycopg2
-from telebot import TeleBot, types
 from datetime import datetime
+from supabase import create_client
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+# --- CONFIGURATION SECTION ---
+BOT_TOKEN = "your_telegram_bot_token"
+SUPABASE_URL = "https://yourproject.supabase.co"
+SUPABASE_KEY = "your_anon_key"
+TARGET_CHANNEL_ID = -1002650324099  # Use -100 prefix for private channels
 
-bot = TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# DB connection
-conn = psycopg2.connect(DATABASE_URL)
-cur = conn.cursor()
+# --- STORE MEDIA TO SUPABASE ---
+def save_media_to_supabase(file_id, media_type, trigger_id):
+    try:
+        data = {
+            "file_id": file_id,
+            "media_type": media_type,
+            "trigger_id": trigger_id,
+            "uploaded_at": datetime.utcnow().isoformat()
+        }
+        result = supabase.table("media_store").insert(data).execute()
+        return result
+    except Exception as e:
+        print("❌ Error saving to Supabase:", e)
+        return None
 
-# Handle media uploads from your private channel
-@bot.message_handler(content_types=['video', 'photo'], chat_types=['channel'])
+# --- RETRIEVE MEDIA BY TRIGGER ID ---
+def get_media_by_trigger_id(trigger_id):
+    try:
+        result = supabase.table("media_store").select("*").eq("trigger_id", trigger_id).limit(1).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        print("❌ Error fetching from Supabase:", e)
+        return None
+
+# --- HANDLE PHOTO/VIDEO FROM CHANNEL ---
+@bot.message_handler(content_types=['photo', 'video'])
 def handle_media(message):
-    if message.content_type == 'video':
-        file_id = message.video.file_id
-        media_type = 'video'
-    elif message.content_type == 'photo':
+    if message.chat.id != TARGET_CHANNEL_ID:
+        return  # Ignore messages from outside the target channel
+
+    media_type = message.content_type
+    trigger_id = str(uuid.uuid4())[:8]  # Short and unique
+
+    if media_type == 'photo':
         file_id = message.photo[-1].file_id
-        media_type = 'photo'
+    elif media_type == 'video':
+        file_id = message.video.file_id
     else:
         return
 
-    trigger_id = str(uuid.uuid4())[:8]  # short unique id
-    uploaded_at = datetime.now()
-
-    # Save metadata to Supabase
-    try:
-        cur.execute("""
-            INSERT INTO media_store (file_id, media_type, trigger_id, uploaded_at)
-            VALUES (%s, %s, %s, %s)
-        """, (file_id, media_type, trigger_id, uploaded_at))
-        conn.commit()
-    except Exception as e:
-        print(f"DB insert failed: {e}")
-        return
-
-    bot.send_message(message.chat.id,
-        f"Media saved! Share this link: /get_{trigger_id}"
-    )
-
-# Handle user command to fetch media
-@bot.message_handler(commands=['get'])
-def handle_get_command(message):
-    cmd = message.text.strip().split('_')
-    if len(cmd) < 2:
-        bot.reply_to(message, "Invalid command format.")
-        return
-
-    trigger_id = cmd[1]
-    cur.execute("SELECT file_id, media_type FROM media_store WHERE trigger_id=%s", (trigger_id,))
-    result = cur.fetchone()
+    result = save_media_to_supabase(file_id, media_type, trigger_id)
 
     if result:
-        file_id, media_type = result
-        if media_type == 'photo':
-            bot.send_photo(message.chat.id, file_id)
-        elif media_type == 'video':
-            bot.send_video(message.chat.id, file_id)
+        bot.reply_to(
+            message,
+            f"✅ Media saved!\n🆔 Trigger ID: `{trigger_id}`\n\n🔗 Share this ID with others to access this media!",
+            parse_mode="Markdown"
+        )
     else:
-        bot.reply_to(message, "No media found with that trigger.")
+        bot.reply_to(message, "❌ Failed to save media.")
 
-# /start, /info, /status commands
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
-    bot.reply_to(message, f"Hello {message.from_user.first_name}")
+# --- HANDLE /get TRIGGER COMMAND ---
+@bot.message_handler(commands=['get'])
+def handle_get_command(message):
+    try:
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            bot.reply_to(message, "⚠️ Usage: `/get <trigger_id>`", parse_mode="Markdown")
+            return
 
-@bot.message_handler(commands=['info'])
-def info_cmd(message):
-    bot.reply_to(message, "I am a bot here to help.")
+        trigger_id = parts[1]
+        media = get_media_by_trigger_id(trigger_id)
 
-@bot.message_handler(commands=['status'])
-def status_cmd(message):
-    bot.reply_to(message, "I am active!")
+        if not media:
+            bot.reply_to(message, "❌ No media found for that trigger ID.")
+            return
 
-print("Bot is running...")
-bot.polling()
+        file_id = media["file_id"]
+        media_type = media["media_type"]
+
+        if media_type == "photo":
+            bot.send_photo(message.chat.id, file_id)
+        elif media_type == "video":
+            bot.send_video(message.chat.id, file_id)
+        else:
+            bot.reply_to(message, "⚠️ Unsupported media type stored.")
+    except Exception as e:
+        print("❌ Error in /get handler:", e)
+        bot.reply_to(message, "⚠️ An error occurred. Please try again.")
+
+# --- START POLLING ---
+print("🤖 Bot is running...")
+bot.infinity_polling()
